@@ -7,9 +7,16 @@ from cpu import *
 
 cpu = CPU()
 
-cpu.load("examples/print8.ls8")
+flag = sys.argv[1]
+if len(flag) > 2:
+    cpu.load(flag)
+else:
+    if flag=="-f":
+        cpu.load(sys.argv[2])
+    else:
+        cpu.load(f"examples/{sys.argv[2]}.ls8")
+# cpu.load("examples/stack.ls8")
 cpu.run()
 
-cpu2 = CPU()
-cpu2.load("examples/mult.ls8")
-cpu2.run()
+# cpu.load("examples/stack.ls8")
+# cpu.run()
