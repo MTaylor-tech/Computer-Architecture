@@ -49,9 +49,10 @@ class CPU:
     def __init__(self):
         """Construct a new CPU."""
         self.ram = [0b00000000]*256
-        self.reg = [0b00000000]*8
+        self.reg = [0b00000000]*7 + [0xF4]
         self.pc = 0 #program counter
-        self.running = True
+        self.fl = 0b00000000
+        self.running = False
 
     def ram_read(self,address):
         if address < len(self.ram):
@@ -83,30 +84,115 @@ class CPU:
 
 
     def process(self, op, operand_a, operand_b):
-        if op == "HLT": # HALT
+        if op == "CALL":
+            pass
+        elif op == "HLT":
             self.running = False
-            return
-        elif op == "LDI": # Load immediate: save value to a register
+        elif op == "INT":
+            pass
+        elif op == "IRET":
+            pass
+        elif op == "JEQ":
+            if self.fl == 0b00000001:
+                self.pc = self.reg[operand_a]
+            else:
+                self.pc += 2
+        elif op == "JGE":
+            if self.fl == 0b00000010 or self.fl == 0b00000001:
+                self.pc = self.reg[operand_a]
+            else:
+                self.pc += 2
+        elif op == "JGT":
+            if self.fl == 0b00000010:
+                self.pc = self.reg[operand_a]
+            else:
+                self.pc += 2
+        elif op == "JLE":
+            if self.fl == 0b00000100 or self.fl == 0b00000001:
+                self.pc = self.reg[operand_a]
+            else:
+                self.pc += 2
+        elif op == "JLT":
+            if self.fl == 0b00000100:
+                self.pc = self.reg[operand_a]
+            else:
+                self.pc += 2
+        elif op == "JMP":
+            self.pc = self.reg[operand_a]
+        elif op == "JNE":
+            if self.fl != 0b00000001:
+                self.pc = self.reg[operand_a]
+            else:
+                self.pc += 2
+        elif op == "LD":
+            self.reg[operand_a] = self.reg[operand_b]
+        elif op == "LDI":
             self.reg[operand_a] = operand_b
-            self.pc += 3
+        elif op == "NOP":
+            pass
+        elif op == "POP":
+            if self.reg[7] < 0xF4:
+                self.reg[operand_a] = self.ram_read(self.reg[7])
+                self.reg[7] += 1
+            else:
+                raise Exception("Stack empty on pop")
+        elif op == "PRA":
+            print(chr(self.reg[operand_a]), end='')
         elif op == "PRN":
             print(self.reg[operand_a])
-            self.pc += 2
+        elif op == "PUSH":
+            if self.reg[7] > 0:
+                self.reg[7] -= 1
+                self.ram_write(self.reg[7],self.reg[operand_a])
+            else:
+                raise Exception("Stack overflow")
         else:
             raise Exception("Unsupported operation")
 
     def alu(self, op, reg_a, reg_b):
         """ALU operations."""
 
-        if op == "ADD": # ADD the value of register b to the val of reg a
+        if op == "ADD":
             self.reg[reg_a] = (self.reg[reg_a]+self.reg[reg_b])&0xFF
-            # self.reg[reg_a] += self.reg[reg_b]
-            self.pc += 3
-        elif op == "MUL": # MULtiply the value of register b to the val of reg a
+        elif op == "AND":
+            self.reg[reg_a] = self.reg[reg_a]&self.reg[reg_b]
+        elif op == "CMP":
+            if self.reg[reg_a]==self.reg[reg_b]:
+                self.fl = 0b00000001
+            elif self.reg[reg_a] > self.reg[reg_b]:
+                self.fl = 0b00000010
+            elif self.reg[reg_a] < self.reg[reg_b]:
+                self.fl = 0b00000100
+            else:
+                self.fl = 0b00000000
+        elif op == "DEC":
+            self.reg[reg_a] = (self.reg[reg_a]-1)&0xFF
+        elif op == "DIV":
+            if self.reg[reg_b]==0:
+                raise Exception("Division by zero")
+            else:
+                self.reg[reg_a] = (self.reg[reg_a]/self.reg[reg_b])&0xFF
+        elif op == "INC":
+            self.reg[reg_a] = (self.reg[reg_a]+1)&0xFF
+        elif op == "MOD":
+            if self.reg[reg_b]==0:
+                raise Exception("Division by zero")
+            else:
+                self.reg[reg_a] = (self.reg[reg_a]%self.reg[reg_b])&0xFF
+        elif op == "MUL":
             self.reg[reg_a] = (self.reg[reg_a]*self.reg[reg_b])&0xFF
-            # self.reg[reg_a] += self.reg[reg_b]
-            self.pc += 3
-        #elif op == "SUB": etc
+        elif op == "NOT":
+            self.reg[reg_a] = ~self.reg[reg_a]
+        elif op == "OR":
+            self.reg[reg_a] = self.reg[reg_a]|self.reg[reg_b]
+        elif op == "SHL":
+            pass
+        elif op == "SHR":
+            pass
+        elif op == "SUB":
+            self.reg[reg_a] = (self.reg[reg_a]-self.reg[reg_b])&0xFF
+        elif op == "XOR":
+            self.reg[reg_a] = self.reg[reg_a]^self.reg[reg_b]
         else:
             raise Exception("Unsupported ALU operation")
 
@@ -116,13 +202,13 @@ class CPU:
         from run() if you need help debugging.
         """
 
-        print(f"TRACE: %02X | %02X %02X %02X |" % (
+        print(f"TRACE: %02X | %02X %02X %02X | %02X" % (
             self.pc,
-            #self.fl,
             #self.ie,
             self.ram_read(self.pc),
             self.ram_read(self.pc + 1),
-            self.ram_read(self.pc + 2)
+            self.ram_read(self.pc + 2),
+            self.fl
         ), end='')
 
         for i in range(8):
@@ -131,20 +217,20 @@ class CPU:
         print()
 
 
-# if (x & (1<<n))
-#   ## n-th bit is set (1)
-#
-# else
-#   ## n-th bit is not set (0)
     def run(self):
         """Run the CPU."""
+        self.running = True
         while self.running:
-            op_code = self.ram_read(self.pc)
-            instruction = OPCODES.get(op_code)
+            # self.trace()
+            ir = self.ram_read(self.pc)
+            instruction = OPCODES.get(ir)
             if instruction is not None:
                 if instruction[TP]==1:
                     self.alu(instruction[OP],self.ram_read(self.pc+1),self.ram_read(self.pc+2))
                 else:
                     self.process(instruction[OP],self.ram_read(self.pc+1),self.ram_read(self.pc+2))
+                if instruction[TP] != 2:
+                    self.pc += instruction[OANDS] + 1
             else:
-                raise Exception("Unrecognized OP Code")
+                self.trace()
+                raise Exception("Unrecognized OP Code {}".format(ir))
