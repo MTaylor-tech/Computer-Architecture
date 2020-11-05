@@ -1,6 +1,7 @@
 """CPU functionality."""
 
 import sys
+import time
 
 # Opcodes
 OP = "op"
@@ -43,6 +44,15 @@ OPCODES = {
     0b10101011: {OP:"XOR",OANDS:2,TP:1}
 }
 
+
+class Counter:
+  def __init__(self):
+    self.epoch = time.time()
+  def get_ticks(self):
+    delta = time.time() - self.epoch
+    return int(delta)
+
+
 class CPU:
     """Main CPU class."""
 
@@ -53,6 +63,13 @@ class CPU:
         self.pc = 0 #program counter
         self.fl = 0b00000000
         self.running = False
+        self.debug = False
+        self.interrupted = False
+        self.intreg = [False]*8
+        self.intcall = [False]*8
+        self.timer = Counter()
+        self.counter = 0
+        self.end = ''
 
     def ram_read(self,address):
         if address < len(self.ram):
@@ -83,15 +100,43 @@ class CPU:
             address += 1
 
 
+    def pop(self):
+        if self.reg[7] < 0xF4:
+            popped = self.ram_read(self.reg[7])
+            self.reg[7] += 1
+            # if self.debug: print(f"Popped: {popped}")
+            return popped
+        else:
+            raise Exception("Stack empty on pop")
+
+
+    def push(self,val):
+        if self.reg[7] > 0:
+            self.reg[7] -= 1
+            self.ram_write(self.reg[7],val)
+        else:
+            raise Exception("Stack overflow")
+
+
     def process(self, op, operand_a, operand_b):
         if op == "CALL":
-            pass
+            if self.debug: print(f"CALL: R{operand_a} {self.reg[operand_a]}")
+            self.push(self.pc+2)
+            self.pc = self.reg[operand_a]
         elif op == "HLT":
             self.running = False
         elif op == "INT":
-            pass
+            # self.pc += 2
+            # self.interrupt(self.reg[operand_a])
+            self.reg[5] += 2**self.reg[operand_a]
+            self.reg[6] += 2**self.reg[operand_a]
+            self.pc += 2
         elif op == "IRET":
-            pass
+            for r in range(7):
+                self.reg[6-r] = self.pop()
+            self.fl = self.pop()
+            self.pc = self.pop()
+            self.interrupted = False
         elif op == "JEQ":
             if self.fl == 0b00000001:
                 self.pc = self.reg[operand_a]
@@ -125,33 +170,36 @@ class CPU:
             else:
                 self.pc += 2
         elif op == "LD":
-            self.reg[operand_a] = self.reg[operand_b]
+            self.reg[operand_a] = self.ram_read(self.reg[operand_b])
         elif op == "LDI":
             self.reg[operand_a] = operand_b
         elif op == "NOP":
             pass
         elif op == "POP":
-            if self.reg[7] < 0xF4:
-                self.reg[operand_a] = self.ram_read(self.reg[7])
-                self.reg[7] += 1
-            else:
-                raise Exception("Stack empty on pop")
+            self.reg[operand_a] = self.pop()
         elif op == "PRA":
-            print(chr(self.reg[operand_a]), end='')
+            if self.debug:
+                print(">> ",end='')
+            print(chr(self.reg[operand_a]),end=self.end)
+            if self.debug:
+                print()
         elif op == "PRN":
+            if self.debug: print(">> ",end='')
             print(self.reg[operand_a])
         elif op == "PUSH":
-            if self.reg[7] > 0:
-                self.reg[7] -= 1
-                self.ram_write(self.reg[7],self.reg[operand_a])
-            else:
-                raise Exception("Stack overflow")
+            self.push(self.reg[operand_a])
+        elif op == "RET":
+            self.pc = self.pop()
+            if self.debug: print(f"RET: {self.pc}")
+        elif op == "ST":
+            self.ram_write(self.reg[operand_a],self.reg[operand_b])
+            # self.reg[operand_a] = self.reg[operand_b]
         else:
             raise Exception("Unsupported operation")
 
+
     def alu(self, op, reg_a, reg_b):
         """ALU operations."""
-
         if op == "ADD":
             self.reg[reg_a] = (self.reg[reg_a]+self.reg[reg_b])&0xFF
         elif op == "AND":
@@ -186,9 +234,9 @@ class CPU:
         elif op == "OR":
             self.reg[reg_a] = self.reg[reg_a]|self.reg[reg_b]
         elif op == "SHL":
-            pass
+            self.reg[reg_a] = (self.reg[reg_a]<<self.reg[reg_b])&0xFF
         elif op == "SHR":
-            pass
+            self.reg[reg_a] = (self.reg[reg_a]>>self.reg[reg_b])&0xFF
         elif op == "SUB":
             self.reg[reg_a] = (self.reg[reg_a]-self.reg[reg_b])&0xFF
         elif op == "XOR":
@@ -196,13 +244,13 @@ class CPU:
         else:
             raise Exception("Unsupported ALU operation")
 
+
     def trace(self):
         """
         Handy function to print out the CPU state. You might want to call this
         from run() if you need help debugging.
         """
-
-        print(f"TRACE: %02X | %02X %02X %02X | %02X" % (
+        print(f"TRACE: %02X | %02X %02X %02X | %02X | " % (
             self.pc,
             #self.ie,
             self.ram_read(self.pc),
@@ -210,21 +258,96 @@ class CPU:
             self.ram_read(self.pc + 2),
             self.fl
         ), end='')
-
         for i in range(8):
             print(" %02X" % self.reg[i], end='')
-
         print()
+
+    def load_interrupts(self):
+        r5 = format(self.reg[5], '#010b')
+        r6 = format(self.reg[6], '#010b')
+        for i in range(8):
+            if r5[-(i+1)] == "1":
+                self.intreg[i] = True
+            if r6[-(i+1)] == "1":
+                self.intcall[i] = True
+
+    def check_interrupts(self):
+        for i in range(8):
+            if self.intreg[i] and self.intcall[i]:
+                return i
+        return None
+
+    def set_interrupt_reg_true(self, i):
+        self.reg[5] += 2**i
+        self.intreg[i] = True
+
+    def set_interrupt_reg_false(self, i):
+        self.reg[5] -= 2**i
+        selt.intreg[i] = False
+
+    def set_interrupt_call_true(self, i):
+        self.reg[6] += 2**i
+        self.intcall[i] = True
+
+    def set_interrupt_call_false(self, i):
+        self.reg[6] -= 2**i
+        self.intcall[i] = False
+
+
+    def interrupt(self, i):
+        if self.debug:
+            print(f"Interrupt {i}", end=" >> ")
+        self.interrupted = True
+        self.set_interrupt_call_false(i)
+        self.push(self.pc)
+        self.push(self.fl)
+        for r in range(7):
+            self.push(self.reg[r])
+        addx = 0xF8 + i
+        self.pc = self.ram_read(addx)
+        if self.debug: print(self.pc)
 
 
     def run(self):
         """Run the CPU."""
         self.running = True
+        testOP = None
+        opcounter = 0
         while self.running:
-            # self.trace()
+            # if self.debug: self.trace()
+            timeplus = False
+            intnow = None
+            self.load_interrupts()
+            if not self.interrupted:
+                intnow = self.check_interrupts()
+            if self.timer.get_ticks() > self.counter:
+                self.counter = self.timer.get_ticks()
+                if self.debug:
+                    print(f"Timer: {self.counter}")
+                if self.intreg[0] and not self.interrupted:
+                    self.end = '\n'
+                    if self.debug:
+                        print("T-",end='')
+                    self.set_interrupt_call_true(0)
+                    intnow = self.check_interrupts()
+            # if not self.interrupted:
+            if intnow is not None:
+                self.interrupt(intnow)
             ir = self.ram_read(self.pc)
             instruction = OPCODES.get(ir)
             if instruction is not None:
+                if self.debug:
+                    if instruction != testOP:
+                        testOP = instruction
+                        opcounter = 0
+                        print(f"\nOP: {instruction[OP]} ",end='')
+                    else:
+                        if opcounter < 10:
+                            opcounter += 1
+                            print("*",end='')
+                        elif opcounter == 10:
+                            opcounter += 1
+                            print("+")
                 if instruction[TP]==1:
                     self.alu(instruction[OP],self.ram_read(self.pc+1),self.ram_read(self.pc+2))
                 else:
@@ -232,5 +355,4 @@ class CPU:
                 if instruction[TP] != 2:
                     self.pc += instruction[OANDS] + 1
             else:
-                self.trace()
                 raise Exception("Unrecognized OP Code {}".format(ir))
