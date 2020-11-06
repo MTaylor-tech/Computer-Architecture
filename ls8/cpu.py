@@ -2,6 +2,7 @@
 
 import sys
 import time
+from pynput import keyboard
 
 # Opcodes
 OP = "op"
@@ -53,6 +54,7 @@ class Counter:
     return int(delta)
 
 
+
 class CPU:
     """Main CPU class."""
 
@@ -70,6 +72,19 @@ class CPU:
         self.timer = Counter()
         self.counter = 0
         self.end = ''
+        self.shift = False
+        self.listener = keyboard.Listener(
+            on_press=self.keypress,
+            on_release=self.on_release)
+        self.listener.start()
+
+    def on_release(self,key):
+        #print('{0} released'.format(key))
+        if key == keyboard.Key.esc:
+            # Stop listener
+            return False
+        elif key==keyboard.Key.shift:
+            self.shift = False
 
     def ram_read(self,address):
         if address < len(self.ram):
@@ -116,6 +131,25 @@ class CPU:
             self.ram_write(self.reg[7],val)
         else:
             raise Exception("Stack overflow")
+
+
+    def keypress(self,key):
+        if self.intreg[1] and not self.intcall[1]:
+            self.set_interrupt_call_true(1)
+            try:
+                k = key.char
+                n = ord(k)
+                if self.shift:
+                    n -= 32
+                if self.debug: print('KeyboardInterrupt: {0} | {1}'.format(k,n))
+                self.ram_write(0xF4,n&0xFF)
+            except AttributeError:
+                if self.debug: print('special key {0} pressed'.format(key))
+                # self.ram_write(0xF4,ord(key)&0xFF)
+                if key==keyboard.Key.shift:
+                    self.shift = True
+                elif key==keyboard.Key.esc:
+                    self.running = False
 
 
     def process(self, op, operand_a, operand_b):
